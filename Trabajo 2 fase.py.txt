@@ -1,0 +1,259 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from google.colab import files
+
+print("Por favor, sube tu archivo de dataset (ej. LifeExpectancyDataset.csv)")
+uploaded = files.upload()
+
+try:
+    file_name = list(uploaded.keys())[0]
+    print(f"\nArchivo subido exitosamente: {file_name}")
+
+    expected_columns = ['Rank', 'Country', 'Overall Life', 'Male Life', 'Female Life', 'Continent']
+
+    try:
+        df = pd.read_csv(file_name, encoding='latin-1')
+        print("\nCSV leído exitosamente con encoding 'latin-1'.")
+    except UnicodeDecodeError:
+        try:
+            df = pd.read_csv(file_name, encoding='cp1252')
+            print("\nCSV leído exitosamente con encoding 'cp1252'.")
+        except UnicodeDecodeError:
+             print("\nNo se pudo leer el archivo con los encodings 'latin-1' o 'cp1252'.")
+             raise
+
+    print("\nPrimeras filas del DataFrame original:")
+    print(df.head())
+
+    if len(df.columns) == len(expected_columns):
+        print(f"\nNombres de columnas originales: {list(df.columns)}")
+        print(f"Renombrando columnas a: {expected_columns} por consistencia.")
+        df.columns = expected_columns
+    else:
+        print(f"\nAdvertencia: El número de columnas en el CSV subido ({len(df.columns)}) "
+              f"no coincide con el número esperado ({len(expected_columns)}).")
+        print(f"Columnas esperadas: {expected_columns}")
+
+    print("\nInformación del DataFrame:")
+    df.info()
+    print("\nDescripción del DataFrame (incluye columnas no numéricas):")
+    print(df.describe(include='all'))
+
+except Exception as e:
+    print(f"\nOcurrió un error durante la subida del archivo o el procesamiento inicial del DataFrame: {e}")
+    raise
+
+print("\n--- Preprocesamiento de Datos ---")
+
+try:
+    df_processed = df.drop(['Rank', 'Country'], axis=1)
+    print("\nColumnas 'Rank' y 'Country' eliminadas.")
+except KeyError as e:
+    print(f"Error al eliminar columnas: {e}.")
+    print(f"Columnas disponibles: {list(df.columns)}")
+    raise ValueError(f"Faltan columnas críticas para eliminar: {e}")
+
+print(f"\nValores faltantes antes del manejo:\n{df_processed.isnull().sum()}")
+df_processed.dropna(inplace=True)
+print(f"\nValores faltantes después de eliminar filas con NaNs:\n{df_processed.isnull().sum()}")
+print(f"\nForma del DataFrame después de eliminar NaNs: {df_processed.shape}")
+
+if df_processed.empty:
+    print("\nError: El DataFrame está vacío después de eliminar valores faltantes.")
+    raise ValueError("El DataFrame quedó vacío después del preprocesamiento de NaNs.")
+
+label_encoder = LabelEncoder()
+df_processed['Continent_Encoded'] = label_encoder.fit_transform(df_processed['Continent'])
+print("\nColumna 'Continent' convertida a 'Continent_Encoded' usando LabelEncoder.")
+
+continent_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+print("\nMapeo de Continente a Etiqueta Codificada:")
+for continent_name, encoded_value in continent_mapping.items():
+    print(f"'{continent_name}': {encoded_value}")
+reverse_continent_mapping = {v: k for k, v in continent_mapping.items()}
+
+print("\nComprobando la distribución de clases en la columna 'Continent_Encoded'...")
+class_counts = df_processed['Continent_Encoded'].value_counts()
+print("Distribución de clases (recuento por etiqueta codificada):\n", class_counts)
+
+rare_classes = class_counts[class_counts < 2].index.tolist()
+
+if rare_classes:
+    rare_continent_names = [reverse_continent_mapping[encoded_val] for encoded_val in rare_classes]
+    print(f"\nAdvertencia: Las siguientes clases (continentes) tienen menos de 2 muestras y serán eliminadas "
+          f"para permitir la estratificación: {rare_continent_names} (etiquetas codificadas: {rare_classes})")
+
+    df_processed = df_processed[~df_processed['Continent_Encoded'].isin(rare_classes)].copy()
+    print(f"Filas con clases raras eliminadas. Nueva forma del DataFrame: {df_processed.shape}")
+
+    print("\nRe-ajustando LabelEncoder después de eliminar clases raras...")
+    label_encoder_refitted = LabelEncoder()
+    df_processed['Continent_Encoded'] = label_encoder_refitted.fit_transform(df_processed['Continent'])
+    continent_mapping = dict(zip(label_encoder_refitted.classes_, label_encoder_refitted.transform(label_encoder_refitted.classes_)))
+    reverse_continent_mapping = {v: k for k, v in continent_mapping.items()}
+    print("Mapeo de Continente a Etiqueta Codificada (Actualizado):")
+    for continent_name, encoded_value in continent_mapping.items():
+        print(f"'{continent_name}': {encoded_value}")
+
+    print(f"\nNueva distribución de clases (recuento por etiqueta codificada):\n{df_processed['Continent_Encoded'].value_counts()}")
+
+X = df_processed[['Overall Life', 'Male Life', 'Female Life']]
+y = df_processed['Continent_Encoded']
+
+print("\nPrimeras filas de las Características (X):")
+print(X.head())
+print("\nPrimeras filas del Objetivo (y) (codificado):")
+print(y.head())
+
+print("\n--- División de Datos y Escalado de Características ---")
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y)
+print(f"\nDatos divididos en conjuntos de entrenamiento y prueba.")
+print(f"Forma de X_train: {X_train.shape}, Forma de X_test: {X_test.shape}")
+print(f"Distribución de clases en y_train: {np.bincount(y_train)}")
+print(f"Distribución de clases en y_test: {np.bincount(y_test)}")
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+print("\nCaracterísticas escaladas usando StandardScaler.")
+
+print("\n--- Entrenamiento del Modelo SVM con GridSearchCV ---")
+
+param_grid = {
+    'C': [0.1, 1, 10, 100],
+    'gamma': ['scale', 'auto', 0.01, 0.1, 1],
+    'kernel': ['rbf', 'linear', 'poly']
+}
+
+grid_search = GridSearchCV(SVC(probability=True, random_state=42), param_grid, cv=5, scoring='accuracy', verbose=1, n_jobs=-1)
+
+print("\nIniciando GridSearchCV para el ajuste de hiperparámetros...")
+grid_search.fit(X_train_scaled, y_train)
+
+best_svm_model = grid_search.best_estimator_
+print("\nGridSearchCV completado.")
+print(f"Mejores Parámetros encontrados por GridSearchCV: {grid_search.best_params_}")
+print(f"Mejor Precisión (Accuracy) de Validación Cruzada: {grid_search.best_score_:.4f}")
+
+print("\n--- Evaluación del Modelo Ajustado ---")
+
+y_pred = best_svm_model.predict(X_test_scaled)
+print("\nPredicciones realizadas en el conjunto de prueba usando el mejor modelo SVM.")
+
+accuracy = accuracy_score(y_test, y_pred)
+print(f"\nPrecisión (Accuracy) en el Conjunto de Prueba del Mejor Modelo SVM: {accuracy:.4f} ({(accuracy*100):.2f}%)")
+
+cm_labels_ordered = label_encoder_refitted.transform(label_encoder_refitted.classes_)
+cm = confusion_matrix(y_test, y_pred, labels=cm_labels_ordered)
+print("\nMatriz de Confusión:")
+print(cm)
+
+plt.figure(figsize=(10, 7))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=label_encoder_refitted.classes_,
+            yticklabels=label_encoder_refitted.classes_)
+plt.xlabel('Etiqueta Predicha', fontsize=12)
+plt.ylabel('Etiqueta Verdadera', fontsize=12)
+plt.title('Matriz de Confusión para el Clasificador SVM Ajustado', fontsize=15)
+plt.show()
+
+class_report = classification_report(y_test, y_pred, target_names=label_encoder_refitted.classes_, zero_division=0)
+print("\nReporte de Clasificación para el Modelo SVM Ajustado:")
+print(class_report)
+
+print("\n--- Visualización de Datos ---")
+
+plt.figure(figsize=(14, 7))
+sns.boxplot(x='Continent', y='Overall Life', data=df_processed, palette='viridis')
+plt.title('Distribución de la Esperanza de Vida General por Continente', fontsize=15)
+plt.xlabel('Continente', fontsize=12)
+plt.ylabel('Esperanza de Vida General (Años)', fontsize=12)
+plt.xticks(rotation=45, ha='right')
+plt.grid(axis='y', linestyle='--')
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(14, 7))
+sns.boxplot(x='Continent', y='Male Life', data=df_processed, palette='plasma')
+plt.title('Distribución de la Esperanza de Vida Masculina por Continente', fontsize=15)
+plt.xlabel('Continente', fontsize=12)
+plt.ylabel('Esperanza de Vida Masculina (Años)', fontsize=12)
+plt.xticks(rotation=45, ha='right')
+plt.grid(axis='y', linestyle='--')
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(14, 7))
+sns.boxplot(x='Continent', y='Female Life', data=df_processed, palette='magma')
+plt.title('Distribución de la Esperanza de Vida Femenina por Continente', fontsize=15)
+plt.xlabel('Continente', fontsize=12)
+plt.ylabel('Esperanza de Vida Femenina (Años)', fontsize=12)
+plt.xticks(rotation=45, ha='right')
+plt.grid(axis='y', linestyle='--')
+plt.tight_layout()
+plt.show()
+
+print("\nGenerando Pair Plot (puede tomar un momento para datasets grandes)...")
+pair_plot_df = df_processed[['Overall Life', 'Male Life', 'Female Life', 'Continent']].copy()
+plt.figure()
+sns.pairplot(pair_plot_df, hue='Continent', palette='Set1', diag_kind='kde', corner=True)
+plt.suptitle('Pair Plot de Características de Esperanza de Vida por Continente', y=1.02, fontsize=16)
+plt.show()
+
+print("\n--- Realizando Predicciones con Datos Nuevos usando el Modelo Ajustado ---")
+
+new_data_samples = {
+    'Overall Life': [78.0, 65.0, 81.5, 55.2],
+    'Male Life':    [75.3, 62.1, 79.0, 53.1],
+    'Female Life':  [80.7, 68.3, 84.0, 57.4]
+}
+new_data_df = pd.DataFrame(new_data_samples)
+print("\nNuevos Datos para Predicción:")
+print(new_data_df)
+
+new_data_scaled = scaler.transform(new_data_df)
+print("\nNuevos Datos Escalados:")
+print(new_data_scaled)
+
+new_predictions_encoded = best_svm_model.predict(new_data_scaled)
+print("\nPredicciones Codificadas para Nuevos Datos:", new_predictions_encoded)
+
+new_predictions_continent = label_encoder_refitted.inverse_transform(new_predictions_encoded)
+
+print("\nContinentes Predichos para Nuevos Datos:")
+for i, row_index in enumerate(new_data_df.index):
+    print(f"Datos: General={new_data_df.loc[row_index, 'Overall Life']}, "
+          f"Hombres={new_data_df.loc[row_index, 'Male Life']}, "
+          f"Mujeres={new_data_df.loc[row_index, 'Female Life']} "
+          f"---> Continente Predicho: {new_predictions_continent[i]}")
+
+print("\n--- Análisis Completado ---")
+
+print("\n--- Análisis Adicional: Esperanza de Vida Promedio por Continente ---")
+average_life_expectancy = df_processed.groupby('Continent')[['Overall Life', 'Male Life', 'Female Life']].mean()
+print("\nEsperanza de Vida Promedio por Continente:")
+print(average_life_expectancy.sort_values(by='Overall Life', ascending=False))
+
+print(f"\nContinente con Mayor Esperanza de Vida Promedio (General): {average_life_expectancy['Overall Life'].idxmax()} ({average_life_expectancy['Overall Life'].max():.2f} años)")
+print(f"Continente con Menor Esperanza de Vida Promedio (General): {average_life_expectancy['Overall Life'].idxmin()} ({average_life_expectancy['Overall Life'].min():.2f} años)")
+
+print(f"\nRespecto a la predicción del continente: El modelo SVM ajustado alcanzó una precisión del {accuracy*100:.2f}%. "
+      "Revisa el reporte de clasificación para ver el rendimiento por cada continente.")
+
+if best_svm_model.kernel == 'linear':
+    try:
+        print("\nCoeficientes del modelo SVM (si el kernel es lineal):")
+        print("La interpretación directa de coef_ para la importancia de características en SVM multiclase (kernel lineal OVO) es compleja.")
+        print("Para kernels no lineales, se requieren métodos como Permutation Importance para estimar la influencia de características.")
+    except Exception as e:
+        print(f"No se pudieron mostrar los coeficientes: {e}")
+else:
+    print(f"\nEl mejor kernel encontrado fue '{best_svm_model.kernel}'. La importancia directa de características no es trivial de extraer con este kernel.")
+    print("Se podrían utilizar técnicas como Permutation Importance para una estimación más robusta de la influencia de características.")

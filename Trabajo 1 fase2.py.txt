@@ -1,0 +1,306 @@
+# -*- coding: utf-8 -*-
+"""
+Modelo de Regresión Logística para Clasificación de Tumores Benignos/Malignos
+"""
+
+# Importar librerías necesarias
+import pandas as pd
+import numpy as np
+from google.colab import files
+import io
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.preprocessing import StandardScaler
+
+# --- 1. Carga de Datos ---
+print("Por favor, sube tu archivo CSV con los datos de los tumores.")
+uploaded = files.upload()
+
+# Asumiendo que subes solo un archivo y obtienes su nombre
+file_name = next(iter(uploaded))
+print(f"\nArchivo '{file_name}' cargado exitosamente.")
+
+# Leer el archivo CSV en un DataFrame de pandas
+# Especificar el tipo de dato para 'Bare Nuclei' como string inicialmente para manejar posibles '?'
+# que son comunes en este dataset clásico (Wisconsin Breast Cancer)
+try:
+    df = pd.read_csv(io.BytesIO(uploaded[file_name]), dtype={'Bare Nuclei': str})
+    print("\nVista previa de los datos:")
+    print(df.head())
+except Exception as e:
+    print(f"\nError al leer el archivo CSV: {e}")
+    # Detener la ejecución si hay un error de lectura
+    raise
+
+# --- 2. Exploración y Preprocesamiento ---
+
+print("\nInformación del DataFrame:")
+df.info()
+
+print("\nEstadísticas Descriptivas:")
+# Convertir 'Bare Nuclei' a numérico, tratando los no numéricos (como '?') como NaN
+df['Bare Nuclei'] = pd.to_numeric(df['Bare Nuclei'], errors='coerce')
+
+# Verificar valores faltantes ahora que 'Bare Nuclei' es numérico
+print("\nValores Faltantes por Columna:")
+print(df.isnull().sum())
+
+# Manejo de valores faltantes (si los hay)
+# Una estrategia común es imputar con la mediana (menos sensible a outliers que la media)
+if df.isnull().sum().any():
+    print("\nImputando valores faltantes con la mediana...")
+    for col in df.columns[df.isnull().any()]:
+        median_val = df[col].median()
+        df[col].fillna(median_val, inplace=True)
+    print("Valores faltantes después de la imputación:")
+    print(df.isnull().sum())
+else:
+    print("\nNo se encontraron valores faltantes o ya fueron manejados.")
+
+# Descripción estadística después de la conversión y posible imputación
+print("\nEstadísticas Descriptivas (post-procesamiento):")
+print(df.describe())
+
+# --- 3. Análisis de la Variable Objetivo (Class) ---
+print("\nAnálisis de la Variable Objetivo 'Class':")
+class_distribution = df['Class'].value_counts()
+print(class_distribution)
+
+# Visualización de la distribución de clases
+plt.figure(figsize=(6, 4))
+sns.countplot(x='Class', data=df)
+plt.title('Distribución de Clases (1: Benigno, 2: Maligno)')
+plt.xlabel('Tipo de Tumor')
+plt.ylabel('Cantidad')
+plt.xticks([0, 1], ['Benigno (1)', 'Maligno (2)']) # Ajustar etiquetas si Class es 1 y 2
+plt.grid(axis='y', linestyle='--')
+plt.show()
+
+# Determinar si el dataset está desbalanceado
+total_samples = len(df)
+percent_benign = (class_distribution.get(1, 0) / total_samples) * 100
+percent_malignant = (class_distribution.get(2, 0) / total_samples) * 100
+print(f"\nPorcentaje Benignos (Clase 1): {percent_benign:.2f}%")
+print(f"Porcentaje Malignos (Clase 2): {percent_malignant:.2f}%")
+
+is_balanced = abs(percent_benign - percent_malignant) < 20 # Umbral arbitrario (e.g., < 60/40 split)
+if is_balanced:
+    print("El dataset parece relativamente balanceado.")
+else:
+    print("El dataset está desbalanceado.")
+
+# --- 4. Preparación de Datos para el Modelo ---
+
+# Separar características (X) y variable objetivo (y)
+X = df.drop('Class', axis=1)
+y = df['Class']
+
+# Obtener los nombres de las características
+feature_names = X.columns.tolist()
+
+# Dividir los datos en conjuntos de entrenamiento y prueba
+# stratify=y asegura que la proporción de clases sea la misma en train y test
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
+print(f"\nDatos divididos:")
+print(f" - Tamaño del conjunto de entrenamiento: {X_train.shape[0]} muestras")
+print(f" - Tamaño del conjunto de prueba: {X_test.shape[0]} muestras")
+
+# --- 5. Entrenamiento del Modelo de Regresión Logística (Sin Escalar) ---
+print("\n--- Entrenamiento del Modelo (Sin Escalar Variables) ---")
+log_reg = LogisticRegression(random_state=42, max_iter=1000) # Aumentar max_iter si no converge
+log_reg.fit(X_train, y_train)
+
+# Predicciones en el conjunto de prueba
+y_pred = log_reg.predict(X_test)
+
+# Evaluación del modelo
+accuracy = accuracy_score(y_test, y_pred)
+conf_matrix = confusion_matrix(y_test, y_pred)
+class_report = classification_report(y_test, y_pred, target_names=['Benigno (1)', 'Maligno (2)'])
+
+print(f"\nPrecisión del Modelo (sin escalar): {accuracy:.4f}")
+print("\nMatriz de Confusión (sin escalar):")
+print(conf_matrix)
+# Visualización de la Matriz de Confusión
+plt.figure(figsize=(6, 4))
+sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['Pred. Benigno (1)', 'Pred. Maligno (2)'],
+            yticklabels=['Real Benigno (1)', 'Real Maligno (2)'])
+plt.title('Matriz de Confusión (Sin Escalar)')
+plt.ylabel('Clase Real')
+plt.xlabel('Clase Predicha')
+plt.show()
+
+print("\nReporte de Clasificación (sin escalar):")
+print(class_report)
+
+# --- 6. Análisis de Características Más Influyentes (Sin Escalar) ---
+# ¡OJO! La magnitud de los coeficientes es comparable DIRECTAMENTE solo si las variables están en escalas similares.
+# Es MEJOR interpretar esto DESPUÉS de escalar. Mostramos esto aquí, pero la versión escalada es más fiable.
+print("\n--- Coeficientes del Modelo (Sin Escalar) ---")
+# Es necesario ajustar para el caso binario simple o multiclase (aunque aquí es binario)
+if len(log_reg.coef_) == 1: # Caso binario con clases 0/1 o codificación similar
+    coefficients = pd.DataFrame(log_reg.coef_[0], index=feature_names, columns=['Coeficiente'])
+else: # Puede ocurrir si las clases son 1 y 2 directamente (una dimensión por clase en algunos solvers)
+     # Asumimos que el coeficiente para la clase 'maligno' (2) es el relevante.
+     # Esto puede necesitar ajuste dependiendo de cómo sklearn codifique internamente 1 y 2.
+     # Generalmente para clases K, coef_ tiene forma (K, n_features) o (1, n_features) si K=2
+     # Si es (1, n_features), es el coef para la clase positiva (asumida como '2' aquí)
+     coefficients = pd.DataFrame(log_reg.coef_[0], index=feature_names, columns=['Coeficiente'])
+
+
+coefficients['Importancia (Abs)'] = coefficients['Coeficiente'].abs()
+coefficients = coefficients.sort_values(by='Importancia (Abs)', ascending=False)
+print(coefficients)
+print("\nNOTA: La interpretación directa de la magnitud de coeficientes sin escalar puede ser engañosa.")
+
+# --- 7. Entrenamiento del Modelo de Regresión Logística (CON Escalar) ---
+print("\n--- Entrenamiento del Modelo (CON Escalar Variables) ---")
+
+# Crear e instanciar el escalador
+scaler = StandardScaler()
+
+# Ajustar el escalador SÓLO con los datos de entrenamiento
+X_train_scaled = scaler.fit_transform(X_train)
+
+# Aplicar la misma transformación a los datos de prueba
+X_test_scaled = scaler.transform(X_test)
+
+# Crear y entrenar un NUEVO modelo con los datos escalados
+log_reg_scaled = LogisticRegression(random_state=42, max_iter=1000)
+log_reg_scaled.fit(X_train_scaled, y_train)
+
+# Predicciones en el conjunto de prueba escalado
+y_pred_scaled = log_reg_scaled.predict(X_test_scaled)
+
+# Evaluación del modelo escalado
+accuracy_scaled = accuracy_score(y_test, y_pred_scaled)
+conf_matrix_scaled = confusion_matrix(y_test, y_pred_scaled)
+class_report_scaled = classification_report(y_test, y_pred_scaled, target_names=['Benigno (1)', 'Maligno (2)'])
+
+print(f"\nPrecisión del Modelo (escalado): {accuracy_scaled:.4f}")
+print("\nMatriz de Confusión (escalado):")
+print(conf_matrix_scaled)
+# Visualización de la Matriz de Confusión
+plt.figure(figsize=(6, 4))
+sns.heatmap(conf_matrix_scaled, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['Pred. Benigno (1)', 'Pred. Maligno (2)'],
+            yticklabels=['Real Benigno (1)', 'Real Maligno (2)'])
+plt.title('Matriz de Confusión (Escalado)')
+plt.ylabel('Clase Real')
+plt.xlabel('Clase Predicha')
+plt.show()
+
+print("\nReporte de Clasificación (escalado):")
+print(class_report_scaled)
+
+
+# --- 8. Análisis de Características Más Influyentes (CON Escalar) ---
+print("\n--- Coeficientes del Modelo (CON Escalar) ---")
+# Ahora la magnitud de los coeficientes es más comparable
+if len(log_reg_scaled.coef_) == 1:
+    coefficients_scaled = pd.DataFrame(log_reg_scaled.coef_[0], index=feature_names, columns=['Coeficiente Escalado'])
+else:
+     coefficients_scaled = pd.DataFrame(log_reg_scaled.coef_[0], index=feature_names, columns=['Coeficiente Escalado'])
+
+coefficients_scaled['Importancia (Abs)'] = coefficients_scaled['Coeficiente Escalado'].abs()
+coefficients_scaled = coefficients_scaled.sort_values(by='Importancia (Abs)', ascending=False)
+print("\nCaracterísticas más influyentes (basado en coeficientes del modelo escalado):")
+print(coefficients_scaled)
+
+# Visualización de la importancia de las características
+plt.figure(figsize=(10, 6))
+sns.barplot(x=coefficients_scaled['Coeficiente Escalado'], y=coefficients_scaled.index, palette='viridis')
+plt.title('Importancia de las Características (Coeficientes del Modelo Escalado)')
+plt.xlabel('Valor del Coeficiente (Log-Odds Ratio)')
+plt.ylabel('Característica')
+plt.grid(axis='x', linestyle='--')
+plt.show()
+
+print("\nInterpretación:")
+print(" - Coeficientes positivos: Aumentan la probabilidad de ser clasificado como Maligno (Clase 2).")
+print(" - Coeficientes negativos: Aumentan la probabilidad de ser clasificado como Benigno (Clase 1).")
+print(" - Mayor valor absoluto: Mayor influencia en la predicción.")
+
+
+# --- 9. Respuestas a las Preguntas ---
+print("\n\n--- Respuestas a las Preguntas ---")
+
+# Pregunta 1: Precisión del modelo
+print(f"\n1. ¿Cuál es la precisión del modelo de Regresión Logística?")
+print(f"   - Precisión SIN escalar: {accuracy:.4f} ({accuracy*100:.2f}%)")
+print(f"   - Precisión CON escalar: {accuracy_scaled:.4f} ({accuracy_scaled*100:.2f}%)")
+print(f"   (Usualmente, la versión escalada es preferible para la evaluación final si mejora o iguala la precisión).")
+
+# Pregunta 2: Características más influyentes
+print("\n2. ¿Cuáles son las características celulares más influyentes?")
+print("   Basado en los valores absolutos de los coeficientes del modelo entrenado con datos escalados:")
+# Mostrar las top 5, por ejemplo
+top_features = coefficients_scaled.head(5)
+for i, (index, row) in enumerate(top_features.iterrows()):
+    print(f"    {i+1}. {index} (Coeficiente: {row['Coeficiente Escalado']:.3f})")
+print("   (Ver la tabla y el gráfico de 'Importancia de las Características' para la lista completa).")
+
+# Pregunta 3: Sesgo del modelo
+print("\n3. ¿El modelo presenta algún sesgo en la clasificación?")
+print("   Para evaluar el sesgo, analizamos la Matriz de Confusión y el Reporte de Clasificación (preferiblemente del modelo escalado):")
+print("   Matriz de Confusión (Escalado):")
+print(conf_matrix_scaled)
+print("\n   Reporte de Clasificación (Escalado):")
+print(class_report_scaled)
+print("\n   Análisis:")
+# Comparar métricas (precision, recall, f1-score) entre 'Benigno (1)' y 'Maligno (2)'
+benign_metrics = class_report_scaled.splitlines()[2].split()[1:4] # Precision, Recall, F1 para Benigno
+malignant_metrics = class_report_scaled.splitlines()[3].split()[1:4] # Precision, Recall, F1 para Maligno
+# Fix: Removing the '(1)' and '(2)' from the metrics and handling potential empty strings
+benign_metrics[0] = benign_metrics[0].replace('(1)', '').replace('(2)', '')
+malignant_metrics[0] = malignant_metrics[0].replace('(1)', '').replace('(2)', '')
+
+# Handling potential empty strings for precision values
+try:
+    benign_precision = float(benign_metrics[0])
+except ValueError:
+    benign_precision = 0.0  # or another suitable default value
+
+try:
+    malignant_precision = float(malignant_metrics[0])
+except ValueError:
+    malignant_precision = 0.0  # or another suitable default value
+
+precision_diff = abs(benign_precision - malignant_precision)
+
+if recall_diff > diff_threshold or precision_diff > diff_threshold:
+     print("   -> Podría haber un ligero sesgo. Una clase se identifica/predice con diferente efectividad que la otra.")
+     print("      Revisa las diferencias en Recall (sensibilidad) y Precision entre las clases.")
+else:
+     print("   -> El modelo parece comportarse de forma similar para ambas clases (benigna y maligna), indicando bajo sesgo.")
+print("   (Observa cuántos benignos se clasifican erróneamente como malignos (Falsos Positivos) y cuántos malignos como benignos (Falsos Negativos) en la matriz de confusión).")
+
+
+# Pregunta 4: Distribución de clases y desbalance
+print("\n4. ¿Cómo se distribuyen las clases y está el dataset desbalanceado?")
+print(f"   - Distribución: {class_distribution.get(1, 0)} muestras Benignas (Clase 1), {class_distribution.get(2, 0)} muestras Malignas (Clase 2).")
+print(f"   - Porcentajes: {percent_benign:.2f}% Benignas, {percent_malignant:.2f}% Malignas.")
+if is_balanced:
+    print("   - El dataset parece relativamente balanceado.")
+else:
+    print("   - El dataset está desbalanceado. Esto podría requerir técnicas avanzadas si el desbalance es severo (ej. sobremuestreo, submuestreo, ajuste de pesos de clase), aunque la Regresión Logística a menudo funciona bien con desbalances moderados.")
+
+# Pregunta 5: Necesidad de normalizar/escalar
+print("\n5. ¿Se necesita normalizar o escalar las variables?")
+print(f"   - Comparación de Precisión: Sin escalar ({accuracy:.4f}) vs. Con escalar ({accuracy_scaled:.4f}).")
+if accuracy_scaled > accuracy:
+    print("   - Sí, escalar las variables MEJORÓ la precisión del modelo.")
+elif accuracy_scaled == accuracy:
+     print("   - Escalar las variables NO cambió significativamente la precisión, pero sigue siendo una buena práctica.")
+else:
+     print("   - Escalar las variables REDUJO ligeramente la precisión en este caso (esto es poco común pero posible).")
+
+print("   - Razón General: Aunque la Regresión Logística no *requiere* estrictamente escalar como los métodos basados en distancia (KNN, SVM), SÍ es MUY RECOMENDABLE porque:")
+print("     1. Ayuda a que el algoritmo de optimización (gradiente descendente) converja más rápido y de forma estable.")
+print("     2. Permite una interpretación MÁS FIABLE de los coeficientes del modelo para determinar la importancia de las características (como se hizo en el paso 8). Sin escalar, una variable con rango [0, 1000] podría tener un coeficiente pequeño simplemente por su escala, no por su baja influencia real.")
+print("   - Conclusión: En general, SÍ se recomienda escalar las variables para la Regresión Logística.")

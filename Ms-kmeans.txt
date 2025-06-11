@@ -1,0 +1,102 @@
+import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import seaborn as sns
+from google.colab import files
+
+print("Por favor, sube el archivo CSV con los datos de los jugadores.")
+uploaded = files.upload()
+
+try:
+    file_name = next(iter(uploaded))
+    data = pd.read_csv(file_name)
+    print(f"\nArchivo '{file_name}' cargado exitosamente.")
+except StopIteration:
+    print("\nNo se ha subido ningún archivo. Por favor, ejecuta la celda de nuevo.")
+except Exception as e:
+    print(f"Ocurrió un error al leer el archivo: {e}")
+
+print("\n--- Vista Previa de los Datos (primeras 5 filas) ---")
+print(data.head())
+
+print("\n--- Información General del Dataset ---")
+data.info()
+
+print("\n--- Estadísticas Descriptivas de los Datos ---")
+print(data.describe())
+
+features = ['wins', 'kills', 'kdRatio', 'level', 'scorePerMinute', 'gamesPlayed']
+X = data[features]
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+print("\nDatos estandarizados y listos para el clustering.")
+
+wcss = []
+k_range = range(1, 11)
+
+for k in k_range:
+    kmeans = KMeans(n_clusters=k, init='k-means++', random_state=42, n_init=10)
+    kmeans.fit(X_scaled)
+    wcss.append(kmeans.inertia_)
+
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.figure(figsize=(10, 6))
+plt.plot(k_range, wcss, marker='o', linestyle='--')
+plt.title('Método del Codo para Determinar el Número Óptimo de Clusters')
+plt.xlabel('Número de Clusters (k)')
+plt.ylabel('Inercia (WCSS)')
+plt.xticks(k_range)
+plt.grid(True)
+plt.show()
+
+optimal_k = 4
+
+print(f"\nAplicando K-Means con k={optimal_k} clusters...")
+
+kmeans_final = KMeans(n_clusters=optimal_k, init='k-means++', random_state=42, n_init=10)
+clusters = kmeans_final.fit_predict(X_scaled)
+
+data['cluster'] = clusters
+
+print("\n¡Clustering completado! Se ha añadido la columna 'cluster' al DataFrame.")
+
+cluster_centers_scaled = kmeans_final.cluster_centers_
+cluster_centers = scaler.inverse_transform(cluster_centers_scaled)
+
+centroids_df = pd.DataFrame(cluster_centers, columns=features)
+centroids_df['cluster'] = range(optimal_k)
+
+print("\n--- Características Promedio por Cluster (Centroides) ---")
+print(centroids_df.set_index('cluster').round(2))
+
+pca = PCA(n_components=2)
+X_pca = pca.fit_transform(X_scaled)
+
+pca_df = pd.DataFrame(data=X_pca, columns=['PC1', 'PC2'])
+pca_df['cluster'] = clusters
+
+plt.figure(figsize=(12, 8))
+sns.scatterplot(x='PC1', y='PC2', hue='cluster', data=pca_df, palette='viridis', s=100, alpha=0.8)
+
+centroids_pca = pca.transform(cluster_centers_scaled)
+plt.scatter(centroids_pca[:, 0], centroids_pca[:, 1], s=300, c='red', marker='X', label='Centroides')
+
+plt.title('Visualización de Clusters de Jugadores (usando PCA)')
+plt.xlabel('Componente Principal 1')
+plt.ylabel('Componente Principal 2')
+plt.legend(title='Cluster')
+plt.grid(True)
+plt.show()
+
+print("\n--- Interpretación de los Segmentos de Jugadores ---")
+for i in range(optimal_k):
+    print(f"\nCluster {i}:")
+    cluster_data = data[data['cluster'] == i]
+    print(f"  - Número de jugadores: {len(cluster_data)}")
+    print(f"  - Características promedio:")
+    print(centroids_df.loc[i].round(2).to_string())

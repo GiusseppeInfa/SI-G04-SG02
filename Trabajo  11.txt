@@ -1,0 +1,118 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+from google.colab import files
+import io
+
+print("--- PASO INICIAL: CARGA DE DATOS ---")
+print("Por favor, sube tu archivo de datos en formato CSV.")
+
+uploaded = files.upload()
+
+if not uploaded:
+    print("\n¡Error! No se subió ningún archivo. Por favor, ejecuta la celda de nuevo.")
+else:
+    file_name = next(iter(uploaded))
+    print(f"\nArchivo '{file_name}' cargado exitosamente.")
+    df = pd.read_csv(io.BytesIO(uploaded[file_name]))
+    print("\nVista previa de tus datos:")
+    print(df.head())
+
+    print("\n--- PASO 1: PREPROCESAMIENTO DE DATOS ---")
+    print("Detectando automáticamente las columnas necesarias...")
+
+    def find_column_name(columns, keywords):
+        for col in columns:
+            for keyword in keywords:
+                if keyword in col.lower():
+                    return col
+        return None
+
+    OPEN_KEYWORDS = ['open', 'apertura']
+    HIGH_KEYWORDS = ['high', 'alto', 'max', 'máximo']
+    LOW_KEYWORDS = ['low', 'bajo', 'min', 'mínimo']
+    CLOSE_KEYWORDS = ['close', 'cierre', 'last', 'último']
+    VOLUME_KEYWORDS = ['volume', 'volumen']
+
+    open_col = find_column_name(df.columns, OPEN_KEYWORDS)
+    high_col = find_column_name(df.columns, HIGH_KEYWORDS)
+    low_col = find_column_name(df.columns, LOW_KEYWORDS)
+    close_col = find_column_name(df.columns, CLOSE_KEYWORDS)
+    volume_col = find_column_name(df.columns, VOLUME_KEYWORDS)
+
+    required_cols_map = {"Apertura": open_col, "Máximo": high_col, "Mínimo": low_col, "Cierre": close_col, "Volumen": volume_col}
+    missing_cols = [name for name, col in required_cols_map.items() if col is None]
+
+    if missing_cols:
+        print(f"\n¡Error! No se pudieron detectar las columnas: {', '.join(missing_cols)}")
+        print("Por favor, renombra las columnas en tu archivo a nombres estándar (ej: 'Open', 'Close', 'Volume') e intenta de nuevo.")
+    else:
+        print("\n¡Detección automática de columnas exitosa!")
+
+        print("Creando características de Volatilidad y Retorno Diario...")
+        df['Volatility'] = (df[high_col] - df[low_col]) / df[close_col]
+        df['Daily_Return'] = (df[close_col] - df[open_col]) / df[open_col]
+
+        features = df[['Volatility', 'Daily_Return', volume_col]]
+        features = features.replace([np.inf, -np.inf], np.nan).dropna()
+        df_cleaned = df.loc[features.index]
+
+        print("Normalizando características con StandardScaler...")
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features)
+        print("Preprocesamiento completado.")
+
+        print("\n--- PASO 2 y 3: APLICANDO GMM Y BUSCANDO N° ÓPTIMO DE CLÚSTERES ---")
+        n_components = np.arange(1, 11)
+        bics = []
+        for n in n_components:
+            gmm = GaussianMixture(n_components=n, random_state=42, n_init=10)
+            gmm.fit(features_scaled)
+            bics.append(gmm.bic(features_scaled))
+
+        optimal_n_components = n_components[np.argmin(bics)]
+        print(f"\nEl número óptimo de clústeres según el criterio BIC es: {optimal_n_components}")
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(n_components, bics, marker='o', linestyle='-')
+        plt.title('Criterio de Información Bayesiano (BIC)')
+        plt.xlabel('Número de Componentes (Clústeres)')
+        plt.ylabel('Puntuación BIC (Menor es mejor)')
+        plt.axvline(optimal_n_components, color='r', linestyle='--', label=f'Óptimo = {optimal_n_components}')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+        gmm_optimal = GaussianMixture(n_components=optimal_n_components, random_state=42, n_init=10)
+        df_cleaned['Cluster'] = gmm_optimal.fit_predict(features_scaled)
+
+        print("\n--- PASO 4: VISUALIZACIÓN DE LOS CLÚSTERES ---")
+
+        plt.figure(figsize=(12, 7))
+        plt.scatter(df_cleaned['Volatility'], df_cleaned[volume_col], c=df_cleaned['Cluster'], cmap='viridis', alpha=0.7)
+        plt.title('Clusters de Días de Negociación (Volatilidad vs. Volumen)')
+        plt.xlabel('Volatilidad')
+        plt.ylabel(f'Volumen ({volume_col})')
+        plt.colorbar(label='Cluster')
+        plt.grid(True)
+        plt.show()
+
+        plt.figure(figsize=(12, 7))
+        plt.scatter(df_cleaned['Daily_Return'], df_cleaned[volume_col], c=df_cleaned['Cluster'], cmap='viridis', alpha=0.7)
+        plt.title('Clusters de Días de Negociación (Retorno Diario vs. Volumen)')
+        plt.xlabel('Retorno Diario')
+        plt.ylabel(f'Volumen ({volume_col})')
+        plt.colorbar(label='Cluster')
+        plt.grid(True)
+        plt.show()
+
+        print("\n--- PASO 5: INTERPRETACIÓN DE LOS GRUPOS ---")
+        print("A continuación se muestra la media de las características para cada clúster,")
+        print("lo que ayuda a definir el 'comportamiento tipo' de cada grupo.")
+
+        cluster_analysis = df_cleaned.groupby('Cluster')[['Volatility', 'Daily_Return', volume_col]].mean()
+        print("\nTabla de Análisis de Clusters (Medias por Característica):")
+        print(cluster_analysis)
+        print("\n--- ANÁLISIS COMPLETADO ---")

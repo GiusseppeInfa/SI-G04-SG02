@@ -1,0 +1,149 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from google.colab import files
+import io
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, confusion_matrix, precision_score, recall_score, f1_score
+
+import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense
+from tensorflow.keras.callbacks import EarlyStopping
+
+print("✅ Librerías importadas correctamente.")
+
+print("\n--- 1A. Carga de Dataset Personalizado ---")
+print("Por favor, selecciona tu archivo CSV cuando aparezca el botón.")
+
+uploaded = files.upload()
+
+if len(uploaded.keys()) == 0:
+    print("❌ No se seleccionó ningún archivo. Por favor, vuelve a ejecutar la celda.")
+else:
+    file_name = next(iter(uploaded))
+    df = pd.read_csv(io.BytesIO(uploaded[file_name]))
+    print(f"\n✅ Archivo '{file_name}' cargado exitosamente.")
+
+TARGET_COLUMN = 'Class'
+
+if 'df' in locals():
+    if TARGET_COLUMN not in df.columns:
+        print(f"❌ ¡ERROR! La columna '{TARGET_COLUMN}' no se encuentra en tu dataset.")
+        print(f"Las columnas disponibles son: {list(df.columns)}")
+    else:
+        print(f"✅ Columna objetivo '{TARGET_COLUMN}' encontrada en el dataset.")
+else:
+    print(" Primero debes cargar un archivo en el paso 1A.")
+
+if 'df' in locals() and TARGET_COLUMN in df.columns:
+    print("\n--- 1C. Exploración Inicial del Dataset ---")
+    print("\nPrimeras 5 filas de tu dataset:")
+    print(df.head())
+
+    print(f"\nDistribución de la columna '{TARGET_COLUMN}' (0 = Normal, 1 = Fraude):")
+    print(df[TARGET_COLUMN].value_counts())
+
+    plt.figure(figsize=(8, 6))
+    sns.countplot(x=TARGET_COLUMN, data=df)
+    plt.title('Distribución de Clases: Transacciones Normales vs. Fraudulentas')
+    plt.xlabel(f'Clase ({TARGET_COLUMN})')
+    plt.ylabel('Cantidad de Transacciones')
+    plt.show()
+
+if 'df' in locals() and TARGET_COLUMN in df.columns:
+    print("\n--- 2. Preprocesamiento de Datos ---")
+    X = df.drop(TARGET_COLUMN, axis=1)
+    y = df[TARGET_COLUMN]
+
+    numeric_cols = X.select_dtypes(include=np.number).columns.tolist()
+    scaler = StandardScaler()
+    X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
+
+    print("Todas las características numéricas han sido estandarizadas.")
+    print("Primeras filas de las características procesadas (X):")
+    print(X.head())
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    X_train_normal = X_train[y_train == 0]
+
+    print(f"\nTamaño del conjunto de entrenamiento solo con transacciones normales: {X_train_normal.shape}")
+
+if 'X_train_normal' in locals():
+    print("\n--- 3. Construcción y Entrenamiento del Autoencoder ---")
+    input_dim = X_train_normal.shape[1]
+    encoding_dim = int(input_dim / 2)
+
+    input_layer = Input(shape=(input_dim,))
+    encoder = Dense(encoding_dim, activation="tanh")(input_layer)
+    encoder = Dense(int(encoding_dim / 2), activation="relu")(encoder)
+    decoder = Dense(int(encoding_dim / 2), activation='tanh')(encoder)
+    decoder = Dense(input_dim, activation='relu')(decoder)
+    autoencoder = Model(inputs=input_layer, outputs=decoder)
+
+    autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+    autoencoder.summary()
+
+    early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+
+    history = autoencoder.fit(
+        X_train_normal, X_train_normal,
+        epochs=50,
+        batch_size=256,
+        shuffle=True,
+        validation_split=0.2,
+        callbacks=[early_stopping],
+        verbose=1
+    )
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(history.history['loss'], label='Pérdida de Entrenamiento')
+    plt.plot(history.history['val_loss'], label='Pérdida de Validación')
+    plt.title('Evolución de la Pérdida del Autoencoder')
+    plt.xlabel('Época')
+    plt.ylabel('Pérdida (MSE)')
+    plt.legend()
+    plt.show()
+
+if 'autoencoder' in locals():
+    print("\n--- 4. Detección de Fraude con el Modelo Entrenado ---")
+    reconstructions = autoencoder.predict(X_test)
+    mse = np.mean(np.power(X_test.to_numpy() - reconstructions, 2), axis=1)
+    error_df = pd.DataFrame({'reconstruction_error': mse, 'true_class': y_test})
+
+    normal_errors = error_df[error_df['true_class'] == 0]['reconstruction_error']
+    threshold = np.quantile(normal_errors, 0.99)
+    print(f"\nUmbral de fraude calculado automáticamente (cuantil 99 de errores normales): {threshold:.4f}")
+
+    y_pred = (error_df.reconstruction_error > threshold).astype(int)
+
+    plt.figure(figsize=(12, 6))
+    sns.histplot(error_df[error_df['true_class'] == 0]['reconstruction_error'], bins=50, label='Normal', kde=True, color='blue')
+    sns.histplot(error_df[error_df['true_class'] == 1]['reconstruction_error'], bins=50, label='Fraude', kde=True, color='red')
+    plt.axvline(threshold, color='k', linestyle='--', label='Umbral')
+    plt.legend()
+    plt.title('Distribución del Error de Reconstrucción')
+    plt.xlabel('Error de Reconstrucción (MSE)')
+    plt.yscale('log')
+    plt.show()
+
+if 'y_pred' in locals():
+    print("\n--- 5. Evaluación Final del Modelo ---")
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues',
+                  xticklabels=['Normal', 'Fraude'], yticklabels=['Normal', 'Fraude'])
+    plt.title('Matriz de Confusión')
+    plt.ylabel('Clase Real')
+    plt.xlabel('Clase Predicha')
+    plt.show()
+
+    print("\nReporte de Clasificación Completo:")
+    print(classification_report(y_test, y_pred, target_names=['Clase Normal', 'Clase Fraude']))
+    print("\n✅ Proceso completado.")
